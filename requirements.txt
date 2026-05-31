@@ -3,6 +3,11 @@ langchain
 langchain-core
 langchain-community
 
+# LangGraph
+langgraph-checkpoint-sqlite
+
+
+
 # Streamlit for Frontend
 streamlit
 

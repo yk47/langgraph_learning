@@ -1,5 +1,11 @@
 import streamlit as st
-from langgraph_backend import chatbot, generate_topic_from_messages
+from langgraph_backend import (
+    chatbot,
+    generate_topic_from_messages,
+    retrieve_all_threads,
+    retrieve_all_thread_topics,
+    save_thread_topic,
+)
 from langchain_core.messages import HumanMessage, AIMessage
 import uuid
 
@@ -9,15 +15,24 @@ def generate_thread_id():
     return thread_id
 
 def reset_chat():
+    previous_thread_id = st.session_state.get('thread_id')
     thread_id = generate_thread_id()
+    add_thread(thread_id) # Add the new thread ID to the list of chat threads
+    if previous_thread_id:
+        promote_thread_to_top(previous_thread_id)
     st.session_state['thread_id'] = thread_id
-    add_thread(st.session_state['thread_id']) # Add the new thread ID to the list of chat threads
     st.session_state['message_history'] = []
     st.session_state['thread_topics'][thread_id] = ""
 
 def add_thread(thread_id):
     if thread_id not in st.session_state['chat_threads']:
         st.session_state['chat_threads'].append(thread_id)
+
+
+def promote_thread_to_top(thread_id):
+    if thread_id in st.session_state['chat_threads']:
+        st.session_state['chat_threads'].remove(thread_id)
+        st.session_state['chat_threads'].insert(0, thread_id)
 
 def load_conversation(thread_id):
     state = chatbot.get_state(config={'configurable': {'thread_id': thread_id}})
@@ -45,10 +60,10 @@ if 'thread_id' not in st.session_state:
     st.session_state['thread_id'] = generate_thread_id()
 
 if 'chat_threads' not in st.session_state:
-    st.session_state['chat_threads'] = [] 
+    st.session_state['chat_threads'] = retrieve_all_threads() 
 
 if 'thread_topics' not in st.session_state:
-    st.session_state['thread_topics'] = {}
+    st.session_state['thread_topics'] = retrieve_all_thread_topics()
 
 add_thread(st.session_state['thread_id'])  # Add the current thread ID to the list of chat threads
 st.session_state['thread_topics'].setdefault(st.session_state['thread_id'], "")
@@ -86,7 +101,7 @@ st.sidebar.markdown(
 st.sidebar.header("My Conversations")
 
 
-for thread_id in st.session_state['chat_threads'][::-1]:  # Display threads in reverse order (most recent first)
+for thread_id in st.session_state['chat_threads']:  
     if thread_id == st.session_state['thread_id']:
         continue
 
@@ -99,6 +114,7 @@ for thread_id in st.session_state['chat_threads'][::-1]:  # Display threads in r
         if not topic_label:
             continue
 
+        # Keep a temporary fallback label in memory, but do not overwrite the saved LLM topic.
         st.session_state['thread_topics'][thread_id] = topic_label
     if st.sidebar.button(topic_label, key=f"thread_btn_{thread_id}"):
         st.session_state['thread_id'] = thread_id
@@ -123,8 +139,6 @@ for message in st.session_state['message_history']:
     with st.chat_message(message['role']):
         st.text(message['content'])
 
-#message_history.append({'role': 'user', 'content': 'Hi'})
-#message_history.append({'role': 'assistant', 'content': 'Hello! How can I assist you today?'})
 
 user_input = st.chat_input("Type your message here...")
 
@@ -158,3 +172,5 @@ if user_input:
     thread_messages = load_conversation(st.session_state['thread_id'])
     topic = generate_topic_from_messages(thread_messages)
     st.session_state['thread_topics'][st.session_state['thread_id']] = topic
+    save_thread_topic(st.session_state['thread_id'], topic)
+    promote_thread_to_top(st.session_state['thread_id'])

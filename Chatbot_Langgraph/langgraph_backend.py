@@ -2,9 +2,10 @@ from langgraph.graph import StateGraph,START,END
 from langgraph.graph.message import add_messages
 from langchain_huggingface import ChatHuggingFace , HuggingFaceEndpoint
 from langchain_core.messages import BaseMessage, HumanMessage
-from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.checkpoint.sqlite import SqliteSaver
 from typing import TypedDict, Annotated
 from dotenv import load_dotenv
+import sqlite3
 import os
 
 load_dotenv()  # Load environment variables from .env file
@@ -58,7 +59,20 @@ def generate_topic_from_messages(messages: list[BaseMessage]) -> str:
     except Exception:
         return "New Chat"
 
-checkpointer = InMemorySaver()
+conn= sqlite3.connect(database='chatbot.db', check_same_thread=False)
+
+conn.execute(
+    """
+    CREATE TABLE IF NOT EXISTS thread_topics (
+        thread_id TEXT PRIMARY KEY,
+        topic TEXT NOT NULL
+    )
+    """
+)
+conn.commit()
+
+# Checkpointing with SQLiteSaver
+checkpointer = SqliteSaver(conn=conn)
 
 graph = StateGraph(ChatState)
 
@@ -71,6 +85,46 @@ graph.add_edge('chat_node', END)
 
 # compile graph
 chatbot = graph.compile(checkpointer=checkpointer)
+
+
+def retrieve_all_threads():
+    rows = conn.execute(
+        """
+        SELECT thread_id, MAX(rowid) AS last_seen
+        FROM checkpoints
+        GROUP BY thread_id
+        ORDER BY last_seen DESC
+        """
+    ).fetchall()
+
+    return [thread_id for thread_id, _ in rows]
+
+
+def save_thread_topic(thread_id: str, topic: str) -> None:
+    conn.execute(
+        """
+        INSERT INTO thread_topics (thread_id, topic)
+        VALUES (?, ?)
+        ON CONFLICT(thread_id) DO UPDATE SET topic = excluded.topic
+        """,
+        (thread_id, topic),
+    )
+    conn.commit()
+
+
+def get_thread_topic(thread_id: str) -> str:
+    row = conn.execute(
+        "SELECT topic FROM thread_topics WHERE thread_id = ?",
+        (thread_id,),
+    ).fetchone()
+    return row[0] if row else ""
+
+
+def retrieve_all_thread_topics() -> dict[str, str]:
+    rows = conn.execute("SELECT thread_id, topic FROM thread_topics").fetchall()
+    return {thread_id: topic for thread_id, topic in rows}
+   
+
 
 
 
