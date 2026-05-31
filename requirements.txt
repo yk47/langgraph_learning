@@ -3,6 +3,8 @@ langchain
 langchain-core
 langchain-community
 
+# Streamlit for Frontend
+streamlit
 
 # OpenAI Integration
 langchain-openai
