@@ -6,7 +6,7 @@ from langgraph_backend import (
     retrieve_all_thread_topics,
     save_thread_topic,
 )
-from langchain_core.messages import HumanMessage, AIMessage
+from langchain_core.messages import HumanMessage, AIMessage,ToolMessage
 import uuid
 
 # ******************************************* utility functions *****************************************
@@ -35,10 +35,14 @@ def promote_thread_to_top(thread_id):
         st.session_state['chat_threads'].insert(0, thread_id)
 
 def load_conversation(thread_id):
-    state = chatbot.get_state(config={'configurable': {'thread_id': thread_id}})
-    # This function can be implemented to load conversation history based on thread_id
-    # For demonstration, we are just returning an empty list
-    return state.values.get('messages', [])
+    try:
+        state = chatbot.get_state(
+            config={"configurable": {"thread_id": thread_id}}
+        )
+        return state.values.get("messages", [])
+    except Exception:
+        st.warning("Unable to load previous conversation.")
+        return []
 
 
 def fallback_topic_from_messages(messages):
@@ -149,24 +153,57 @@ if user_input:
         st.text(user_input)
     
 
-    CONFIG = {'configurable': {'thread_id': st.session_state['thread_id']}}  # Example configuration, adjust as needed
+    CONFIG = {
+        "configurable": {"thread_id": st.session_state["thread_id"]},
+        "metadata": {
+            "thread_id": st.session_state["thread_id"]
+        },
+        "run_name": "chat_turn",
+    }
 
     # then add assistant response to history (for demonstration, we are just echoing the user input)
    
+    # Assistant streaming block
     with st.chat_message("assistant"):
+        # Use a mutable holder so the generator can set/modify it
+        status_holder = {"box": None}
+
         def ai_only_stream():
             for message_chunk, metadata in chatbot.stream(
                 {"messages": [HumanMessage(content=user_input)]},
                 config=CONFIG,
-                stream_mode="messages"
+                stream_mode="messages",
             ):
+                # Lazily create & update the SAME status container when any tool runs
+                if isinstance(message_chunk, ToolMessage):
+                    tool_name = getattr(message_chunk, "name", "tool")
+                    if status_holder["box"] is None:
+                        status_holder["box"] = st.status(
+                            f"🔧 Using `{tool_name}` …", expanded=True
+                        )
+                    else:
+                        status_holder["box"].update(
+                            label=f"🔧 Using `{tool_name}` …",
+                            state="running",
+                            expanded=True,
+                        )
+
+                # Stream ONLY assistant tokens
                 if isinstance(message_chunk, AIMessage):
-                    # yield only assistant tokens
                     yield message_chunk.content
 
         ai_message = st.write_stream(ai_only_stream())
 
-    st.session_state['message_history'].append({'role': 'assistant', 'content': ai_message})
+        # Finalize only if a tool was actually used
+        if status_holder["box"] is not None:
+            status_holder["box"].update(
+                label="✅ Tool finished", state="complete", expanded=False
+            )
+
+    # Save assistant message
+    st.session_state["message_history"].append(
+        {"role": "assistant", "content": ai_message}
+    )
 
     # Generate/update a human-readable topic for this thread.
     thread_messages = load_conversation(st.session_state['thread_id'])
